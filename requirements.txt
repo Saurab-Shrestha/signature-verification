@@ -123,6 +123,7 @@ python-dotenv==1.1.0
 python-multipart==0.0.20
 pytorch-lightning==1.5.2
 pytz==2025.2
+PyWavelets==1.8.0
 PyYAML==6.0.2
 pyzmq==26.4.0
 referencing==0.36.2

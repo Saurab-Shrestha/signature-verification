@@ -8,6 +8,12 @@ from scipy.spatial.distance import euclidean
 from .birefnet_processor import birefnet_processor
 import pywt
 from scipy.signal import convolve2d
+from preprocess.signature_cleaning import SignatureCleaner
+import tempfile
+import os
+
+# Initialize SignatureCleaner as a global instance
+signature_cleaner = SignatureCleaner()
 
 def filter_boundary_points(boundary_coords, min_cluster_size=3):
     """Filter boundary points to remove isolated noise"""
@@ -74,73 +80,83 @@ def extract_signature_boundary_points(image_path, alpha_thresh=127, min_area=500
     if image is None:
         raise ValueError(f"Could not load image from {image_path}")
 
-    # Convert to PIL for BiRefNet
     pil_image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
-    processed_image, _ = birefnet_processor.remove_background(pil_image)
-
-    rgba_np = np.array(processed_image)
-    if rgba_np.shape[2] != 4:
-        raise ValueError("Expected RGBA image from BiRefNet")
-
-    alpha_mask = rgba_np[:, :, 3]
-    mask_binary = (alpha_mask > alpha_thresh).astype(np.uint8) * 255
-
-    contours, _ = cv2.findContours(mask_binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if not contours:
-        print("Warning: No contours found in alpha mask.")
-        return mask_binary, mask_binary, []
-
-    contours = [cnt for cnt in contours if cv2.contourArea(cnt) > min_area]
-    if not contours:
-        print("Warning: No significant contours found.")
-        return mask_binary, mask_binary, []
-
-    all_pts = np.vstack(contours)
-    x, y, w, h = cv2.boundingRect(all_pts)
-
-    x = max(0, x - padding)
-    y = max(0, y - padding)
-    w = min(mask_binary.shape[1] - x, w + 2 * padding)
-    h = min(mask_binary.shape[0] - y, h + 2 * padding)
-
-    cropped_mask = mask_binary[y:y+h, x:x+w]
-    cropped_image = cv2.cvtColor(rgba_np[y:y+h, x:x+w, :3], cv2.COLOR_RGB2GRAY)
-
-    if debug:
-        plt.figure(figsize=(12, 4))
-        plt.subplot(1, 3, 1)
-        plt.imshow(mask_binary, cmap='gray')
-        plt.title("Alpha Mask")
-        plt.axis("off")
-
-        plt.subplot(1, 3, 2)
-        plt.imshow(cropped_image, cmap='gray')
-        plt.title("Cropped Image")
-        plt.axis("off")
-
-        plt.subplot(1, 3, 3)
-        plt.imshow(cropped_mask, cmap='gray')
-        plt.title("Cropped Mask")
-        plt.axis("off")
-        plt.tight_layout()
-        plt.show()
-
-    boundary_points = np.column_stack(np.where(cropped_mask == 255))
-    boundary_coords = list(zip(boundary_points[:, 1], boundary_points[:, 0]))
-
-    boundary_coords = filter_boundary_points(boundary_coords, min_cluster_size=3)
-
-    if boundary_coords:
-        reconstructed = reconstruct_from_boundary_points(
-            boundary_coords,
-            bbox=(0, 0, cropped_mask.shape[1], cropped_mask.shape[0]),
-            canvas_shape=cropped_mask.shape
+    
+    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+        temp_path = tmp.name
+    
+    try:
+        # Use clean_and_normalize for complete processing
+        original, cleaned_image, normalized_pil = signature_cleaner.clean_and_normalize(
+            pil_image, 
+            save_path=temp_path,
+            normalize_size=(512, 512)  # Match the target size used in center_resize
         )
-    else:
-        reconstructed = cropped_mask
-    reconstructed_resized = center_resize(reconstructed, target_size=(512, 512))
+        
+        normalized_np = np.array(normalized_pil)
+        
+        mask_binary = (normalized_np < 255).astype(np.uint8) * 255
+        
+        contours, _ = cv2.findContours(mask_binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            print("Warning: No contours found in normalized image.")
+            return normalized_np, normalized_np, []
 
-    return cropped_image, reconstructed_resized, boundary_coords
+        contours = [cnt for cnt in contours if cv2.contourArea(cnt) > min_area]
+        if not contours:
+            print("Warning: No significant contours found.")
+            return normalized_np, normalized_np, []
+
+        all_pts = np.vstack(contours)
+        x, y, w, h = cv2.boundingRect(all_pts)
+
+        x = max(0, x - padding)
+        y = max(0, y - padding)
+        w = min(mask_binary.shape[1] - x, w + 2 * padding)
+        h = min(mask_binary.shape[0] - y, h + 2 * padding)
+
+        cropped_mask = mask_binary[y:y+h, x:x+w]
+        cropped_image = normalized_np[y:y+h, x:x+w]
+
+        if debug:
+            plt.figure(figsize=(12, 4))
+            plt.subplot(1, 3, 1)
+            plt.imshow(normalized_np, cmap='gray')
+            plt.title("Normalized Image")
+            plt.axis("off")
+
+            plt.subplot(1, 3, 2)
+            plt.imshow(cropped_image, cmap='gray')
+            plt.title("Cropped Image")
+            plt.axis("off")
+
+            plt.subplot(1, 3, 3)
+            plt.imshow(cropped_mask, cmap='gray')
+            plt.title("Cropped Mask")
+            plt.axis("off")
+            plt.tight_layout()
+            plt.show()
+
+        boundary_points = np.column_stack(np.where(cropped_mask == 255))
+        boundary_coords = list(zip(boundary_points[:, 1], boundary_points[:, 0]))
+
+        boundary_coords = filter_boundary_points(boundary_coords, min_cluster_size=3)
+
+        if boundary_coords:
+            reconstructed = reconstruct_from_boundary_points(
+                boundary_coords,
+                bbox=(0, 0, cropped_mask.shape[1], cropped_mask.shape[0]),
+                canvas_shape=cropped_mask.shape
+            )
+        else:
+            reconstructed = cropped_mask
+
+        return cropped_image, reconstructed, boundary_coords
+
+    finally:
+        # Clean up temporary file
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)
 
 
 def extract_enhanced_signature_features(signature, boundary_coords):
