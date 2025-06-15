@@ -1,25 +1,13 @@
 import cv2
 import numpy as np
+from PIL import Image
 from skimage import morphology
 import matplotlib.pyplot as plt
-import torch
-from transformers import AutoModelForImageSegmentation
-from torchvision import transforms
-from PIL import Image
-
 from scipy.stats import pearsonr
 from scipy.spatial.distance import euclidean
-
-from skimage.feature import graycomatrix, graycoprops
-
 from .birefnet_processor import birefnet_processor
-
-import cv2
-import numpy as np
-from PIL import Image
-import matplotlib.pyplot as plt
-from core.birefnet_processor import birefnet_processor
-
+import pywt
+from scipy.signal import convolve2d
 
 def filter_boundary_points(boundary_coords, min_cluster_size=3):
     """Filter boundary points to remove isolated noise"""
@@ -90,7 +78,6 @@ def extract_signature_boundary_points(image_path, alpha_thresh=127, min_area=500
     pil_image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
     processed_image, _ = birefnet_processor.remove_background(pil_image)
 
-    # Get alpha channel from RGBA
     rgba_np = np.array(processed_image)
     if rgba_np.shape[2] != 4:
         raise ValueError("Expected RGBA image from BiRefNet")
@@ -98,13 +85,11 @@ def extract_signature_boundary_points(image_path, alpha_thresh=127, min_area=500
     alpha_mask = rgba_np[:, :, 3]
     mask_binary = (alpha_mask > alpha_thresh).astype(np.uint8) * 255
 
-    # Find valid contours
     contours, _ = cv2.findContours(mask_binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
         print("Warning: No contours found in alpha mask.")
         return mask_binary, mask_binary, []
 
-    # Filter or merge contours
     contours = [cnt for cnt in contours if cv2.contourArea(cnt) > min_area]
     if not contours:
         print("Warning: No significant contours found.")
@@ -113,7 +98,6 @@ def extract_signature_boundary_points(image_path, alpha_thresh=127, min_area=500
     all_pts = np.vstack(contours)
     x, y, w, h = cv2.boundingRect(all_pts)
 
-    # Apply padding and crop
     x = max(0, x - padding)
     y = max(0, y - padding)
     w = min(mask_binary.shape[1] - x, w + 2 * padding)
@@ -122,7 +106,6 @@ def extract_signature_boundary_points(image_path, alpha_thresh=127, min_area=500
     cropped_mask = mask_binary[y:y+h, x:x+w]
     cropped_image = cv2.cvtColor(rgba_np[y:y+h, x:x+w, :3], cv2.COLOR_RGB2GRAY)
 
-    # Debug preview
     if debug:
         plt.figure(figsize=(12, 4))
         plt.subplot(1, 3, 1)
@@ -142,7 +125,6 @@ def extract_signature_boundary_points(image_path, alpha_thresh=127, min_area=500
         plt.tight_layout()
         plt.show()
 
-    # Extract and reconstruct from boundary points
     boundary_points = np.column_stack(np.where(cropped_mask == 255))
     boundary_coords = list(zip(boundary_points[:, 1], boundary_points[:, 0]))
 
@@ -156,8 +138,6 @@ def extract_signature_boundary_points(image_path, alpha_thresh=127, min_area=500
         )
     else:
         reconstructed = cropped_mask
-
-    # Optionally normalize output
     reconstructed_resized = center_resize(reconstructed, target_size=(512, 512))
 
     return cropped_image, reconstructed_resized, boundary_coords
@@ -238,6 +218,16 @@ def extract_enhanced_signature_features(signature, boundary_coords):
         features['convexity'] = 0
         features['bbox_ratio'] = 0
     
+    # Add SWIFT features
+    swift_features = extract_swift_features(signature)
+    features.update({
+        'swift_energy': swift_features['energy'],
+        'swift_entropy': swift_features['entropy'],
+        'swift_mean': swift_features['mean'],
+        'swift_std': swift_features['std'],
+        'swift_correlation': swift_features['correlation']
+    })
+    
     return features
 
 def compare_boundary_signatures(img1_path, img2_path, debug=False):
@@ -262,43 +252,47 @@ def compare_boundary_signatures(img1_path, img2_path, debug=False):
     # Calculate boundary point similarity
     boundary_similarity = compare_boundary_points(boundary1, boundary2)
     
-    # Calculate final score with boundary point consideration
+    # Calculate final score with improved weights including SWIFT
     weights = {
-        'scalar_features': 0.30,
-        'projections': 0.40,
-        'boundary_points': 0.15,
-        'aspect_ratio': 0.15
+        'scalar_features': 0.30,  # Increased weight
+        'projections': 0.30,      # Increased weight
+        'boundary_points': 0.25,  # Increased weight
+        'swift_features': 0.15    # Kept same
     }
+    
     final_score = (
         weights['scalar_features'] * similarities['scalar_avg'] +
-        weights['projections'] * (similarities['h_projection_corr'] + 
+        weights['projections'] * (similarities['h_projection_corr'] +
                                  similarities['v_projection_corr']) / 2 +
         weights['boundary_points'] * boundary_similarity +
-        weights['aspect_ratio'] * similarities['aspect_ratio_similarity']
+        weights['swift_features'] * similarities['swift_avg']
     )
-    
-    # Enhanced red flag detection
+
+    # Enhanced red flag detection with slightly stricter thresholds
     red_flags = []
-    
-    if similarities['aspect_ratio_similarity'] < 0.7:
-        red_flags.append("Very different aspect ratios")
-    
-    if similarities['density_similarity'] < 0.6:
+
+    if similarities['density_similarity'] < 0.4:
         red_flags.append("Very different signature densities")
-    
-    if abs(len(boundary1) - len(boundary2)) / max(len(boundary1), len(boundary2), 1) > 0.5:
+
+    if abs(len(boundary1) - len(boundary2)) / max(len(boundary1), len(boundary2), 1) > 0.7:
         red_flags.append("Very different number of boundary points")
-    
-    if boundary_similarity < 0.4:
+
+    if boundary_similarity < 0.2:
         red_flags.append("Boundary point distributions are very different")
-    
-    if similarities['scalar_avg'] < 0.5:
-        red_flags.append("Most features are dissimilar")
-    
-    # Adjust score based on red flags
-    penalty = len(red_flags) * 0.08
+
+    if similarities['scalar_avg'] < 0.35:
+        red_flags.append("Most scalar features are dissimilar")
+
+    if similarities['swift_avg'] < 0.3:
+        red_flags.append("Wavelet-based features show significant differences")
+
+    if abs(features1['num_components'] - features2['num_components']) > 3:
+        red_flags.append("Very different number of connected components")
+
+    # Adjust score based on red flags with increased penalty
+    penalty = len(red_flags) * 0.10
     adjusted_score = max(0, final_score - penalty)
-    
+
     results = {
         'raw1': raw1, 'raw2': raw2,
         'recon1': recon1, 'recon2': recon2,
@@ -310,16 +304,15 @@ def compare_boundary_signatures(img1_path, img2_path, debug=False):
         'adjusted_score': adjusted_score,
         'red_flags': red_flags
     }
-    
+
     return results
 
 def compare_enhanced_features(features1, features2):
-    """Enhanced feature comparison including boundary point features"""
+    """Enhanced feature comparison including boundary point features and SWIFT features"""
     
     similarities = {}
     
-    # Compare scalar features including boundary features
-    scalar_features = ['aspect_ratio', 'density', 'centroid_x', 'centroid_y', 
+    scalar_features = ['density', 'centroid_x', 'centroid_y', 
                       'std_x', 'std_y', 'num_components', 'contour_area_ratio', 
                       'perimeter', 'convexity', 'bbox_ratio', 'boundary_density',
                       'boundary_centroid_x', 'boundary_centroid_y', 'boundary_std_x', 
@@ -337,13 +330,36 @@ def compare_enhanced_features(features1, features2):
     
     similarities['scalar_avg'] = 1 - np.mean(scalar_diffs)
     
-    # Compare projections
+    # Compare SWIFT features
+    swift_features_to_compare = {
+        'energy': True,  # Apply log transform
+        'entropy': False,
+        'mean': False,
+        'std': False,
+        'correlation': False
+    }
+    swift_similarities = []
+    
+    for feature_type, use_log_transform in swift_features_to_compare.items():
+        for subband in features1[f'swift_{feature_type}'].keys():
+            val1 = features1[f'swift_{feature_type}'][subband]
+            val2 = features2[f'swift_{feature_type}'][subband]
+            
+            if use_log_transform: # Apply log transform for energy
+                val1 = np.log1p(val1) 
+                val2 = np.log1p(val2)
+            
+            max_val = max(abs(val1), abs(val2), 1e-6)
+            diff = abs(val1 - val2) / max_val
+            swift_similarities.append(1 - diff)
+    
+    similarities['swift_avg'] = np.mean(swift_similarities) if swift_similarities else 0
+    
     h_proj1 = features1['h_projection']
     h_proj2 = features2['h_projection']
     v_proj1 = features1['v_projection']
     v_proj2 = features2['v_projection']
     
-    # Resize projections for comparison
     min_len_h = min(len(h_proj1), len(h_proj2))
     min_len_v = min(len(v_proj1), len(v_proj2))
     
@@ -374,28 +390,23 @@ def compare_boundary_points(boundary1, boundary2):
         return 0.0
     
     try:
-        # Convert to numpy arrays with explicit dtype
         points1 = np.array(boundary1, dtype=np.float64)
         points2 = np.array(boundary2, dtype=np.float64)
         
-        # Validate 2D points
         if points1.ndim != 2 or points2.ndim != 2 or points1.shape[1] != 2 or points2.shape[1] != 2:
             return 0.0
             
     except (ValueError, TypeError):
         return 0.0
     
-    # Improved normalization function
     def normalize_points(points):
         if len(points) == 0:
             return points
         min_vals = np.min(points, axis=0)
         max_vals = np.max(points, axis=0)
         range_vals = max_vals - min_vals
-        # Better handling of zero range
         range_vals = np.where(range_vals < 1e-10, 1.0, range_vals)
         normalized = (points - min_vals) / range_vals
-        # Ensure values are in [0, 1]
         return np.clip(normalized, 0, 1)
     
     norm_points1 = normalize_points(points1)
@@ -404,7 +415,6 @@ def compare_boundary_points(boundary1, boundary2):
     # Use coarser bins to be more forgiving of small variations
     bins = 20  # Reduced from 50 to be less sensitive to minor shifts
     
-    # Create 2D histograms with Gaussian smoothing effect
     try:
         hist1, _, _ = np.histogram2d(
             norm_points1[:, 0], norm_points1[:, 1], 
@@ -415,13 +425,11 @@ def compare_boundary_points(boundary1, boundary2):
             bins=bins, range=[[0, 1], [0, 1]], density=True
         )
         
-        # Apply Gaussian blur to make comparison more forgiving
         from scipy.ndimage import gaussian_filter
         hist1 = gaussian_filter(hist1, sigma=0.8)
         hist2 = gaussian_filter(hist2, sigma=0.8)
         
     except ImportError:
-        # Fallback without Gaussian blur
         hist1, _, _ = np.histogram2d(
             norm_points1[:, 0], norm_points1[:, 1], 
             bins=bins, range=[[0, 1], [0, 1]], density=True
@@ -433,7 +441,6 @@ def compare_boundary_points(boundary1, boundary2):
     except Exception:
         return 0.0
     
-    # Normalize histograms properly
     hist1_sum = np.sum(hist1)
     hist2_sum = np.sum(hist2)
     
@@ -442,7 +449,6 @@ def compare_boundary_points(boundary1, boundary2):
     if hist2_sum > 0:
         hist2 = hist2 / hist2_sum
     
-    # Calculate multiple similarity metrics that are more forgiving
     hist1_flat = hist1.flatten()
     hist2_flat = hist2.flatten()
     
@@ -474,47 +480,6 @@ def compare_boundary_points(boundary1, boundary2):
         
     except Exception:
         return 0.0
-    
-def rotate_image(image, angle):
-    """Rotate image around its center without cropping."""
-    h, w = image.shape[:2]
-    center = (w // 2, h // 2)
-    M = cv2.getRotationMatrix2D(center, angle, 1.0)
-    rotated = cv2.warpAffine(image, M, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
-    return rotated
-
-def template_matching_with_rotation(img1, img2, angle_range=range(-15, 16, 3)):
-    """
-    Template matching with rotation search.
-    :param img1: Template image
-    :param img2: Search image
-    :param angle_range: Rotation angles to try (degrees)
-    """
-    # Resize to standard size
-    target_size = (200, 200)
-    img1_norm = cv2.resize(img1, target_size)
-    img2_norm = cv2.resize(img2, target_size)
-
-    methods = [cv2.TM_CCOEFF_NORMED, cv2.TM_CCORR_NORMED]
-    best_score = -1  # Initialize with lowest possible match score
-
-    for angle in angle_range:
-        rotated_template = rotate_image(img1_norm, angle)
-
-        scores = []
-        for method in methods:
-            result1 = cv2.matchTemplate(img2_norm, rotated_template, method)
-            result2 = cv2.matchTemplate(rotated_template, img2_norm, method)
-
-            _, max_val1, _, _ = cv2.minMaxLoc(result1)
-            _, max_val2, _, _ = cv2.minMaxLoc(result2)
-
-            scores.extend([max_val1, max_val2])
-
-        avg_score = np.mean(scores)
-        best_score = max(best_score, avg_score)
-
-    return best_score
 
 def clean_signature_advanced(image_path, output_path=None):
     """Clean signature using BiRefNet for background removal and basic cropping"""
@@ -527,18 +492,15 @@ def clean_signature_advanced(image_path, output_path=None):
     
     processed_image, mask = birefnet_processor.remove_background(pil_image)    
     processed_np = np.array(processed_image)
-    mask_np = np.array(processed_image.split()[-1])  # Get alpha channel
+    mask_np = np.array(processed_image.split()[-1])
     
-    # Convert to grayscale
     gray = cv2.cvtColor(processed_np, cv2.COLOR_RGBA2GRAY)
     
-    # Apply mask to get clean signature
     binary = np.zeros_like(gray)
     binary[mask_np > 127] = 255
     
     contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if contours:
-        # Get the largest contour
         largest_contour = max(contours, key=cv2.contourArea)
         x, y, w, h = cv2.boundingRect(largest_contour)
         
@@ -548,7 +510,6 @@ def clean_signature_advanced(image_path, output_path=None):
         w = min(binary.shape[1] - x, w + 2 * padding)
         h = min(binary.shape[0] - y, h + 2 * padding)
         
-        # Crop the image
         cropped = binary[y:y+h, x:x+w]
     else:
         cropped = binary
@@ -557,3 +518,88 @@ def clean_signature_advanced(image_path, output_path=None):
         cv2.imwrite(output_path, cropped)
     
     return cropped
+
+def apply_dwt(image, wavelet='db1', level=2):
+    """Apply Discrete Wavelet Transform to the image"""
+    # Ensure image is float32
+    image = image.astype(np.float32)
+    
+    # Apply DWT
+    coeffs = pywt.wavedec2(image, wavelet, level=level)
+    
+    # Extract coefficients
+    cA = coeffs[0]  # Approximation coefficients
+    cH = coeffs[1][0]  # Horizontal detail coefficients
+    cV = coeffs[1][1]  # Vertical detail coefficients
+    cD = coeffs[1][2]  # Diagonal detail coefficients
+    
+    return cA, cH, cV, cD
+
+def extract_swift_features(image, wavelet='db1', level=2):
+    """Extract SIFT features from the signature image"""
+    # Apply DWT
+    cA, cH, cV, cD = apply_dwt(image, wavelet, level)
+    
+    # Calculate energy features
+    energy_cA = np.sum(cA ** 2)
+    energy_cH = np.sum(cH ** 2)
+    energy_cV = np.sum(cV ** 2)
+    energy_cD = np.sum(cD ** 2)
+    
+    # Calculate entropy features
+    def calculate_entropy(coeffs):
+        hist, _ = np.histogram(coeffs.flatten(), bins=256, density=True)
+        hist = hist[hist > 0]
+        return -np.sum(hist * np.log2(hist))
+    
+    entropy_cA = calculate_entropy(cA)
+    entropy_cH = calculate_entropy(cH)
+    entropy_cV = calculate_entropy(cV)
+    entropy_cD = calculate_entropy(cD)
+    
+    # Calculate mean and standard deviation
+    mean_cA = np.mean(cA)
+    std_cA = np.std(cA)
+    mean_cH = np.mean(cH)
+    std_cH = np.std(cH)
+    mean_cV = np.mean(cV)
+    std_cV = np.std(cV)
+    mean_cD = np.mean(cD)
+    std_cD = np.std(cD)
+    
+    # Calculate correlation between subbands
+    corr_HV = np.corrcoef(cH.flatten(), cV.flatten())[0, 1]
+    corr_HD = np.corrcoef(cH.flatten(), cD.flatten())[0, 1]
+    corr_VD = np.corrcoef(cV.flatten(), cD.flatten())[0, 1]
+    
+    return {
+        'energy': {
+            'cA': energy_cA,
+            'cH': energy_cH,
+            'cV': energy_cV,
+            'cD': energy_cD
+        },
+        'entropy': {
+            'cA': entropy_cA,
+            'cH': entropy_cH,
+            'cV': entropy_cV,
+            'cD': entropy_cD
+        },
+        'mean': {
+            'cA': mean_cA,
+            'cH': mean_cH,
+            'cV': mean_cV,
+            'cD': mean_cD
+        },
+        'std': {
+            'cA': std_cA,
+            'cH': std_cH,
+            'cV': std_cV,
+            'cD': std_cD
+        },
+        'correlation': {
+            'HV': corr_HV,
+            'HD': corr_HD,
+            'VD': corr_VD
+        }
+    }
