@@ -188,11 +188,7 @@ def main(
         # Export reconstruction in Bundler format
         if export_bundler:
             fname = "bundler"
-            model.export_bundler(
-                reconstruction_dir / (fname + ".out"),
-                reconstruction_dir / (fname + "_list.txt"),
-                skip_distortion=True,
-            )
+            # model.export_bundler(reconstruction_dir / (fname + ".out"),reconstruction_dir / (fname + "_list.txt"),skip_distortion=True,)
 
     else:
         logger.error("Pycolmap reconstruction failed")
