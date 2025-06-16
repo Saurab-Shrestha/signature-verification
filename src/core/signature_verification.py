@@ -11,6 +11,7 @@ from scipy.signal import convolve2d
 from preprocess.signature_cleaning import SignatureCleaner
 import tempfile
 import os
+from .image_matching import SignatureMatchingPipeline
 
 # Initialize SignatureCleaner as a global instance
 signature_cleaner = SignatureCleaner()
