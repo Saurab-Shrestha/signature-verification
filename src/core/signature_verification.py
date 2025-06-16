@@ -270,10 +270,10 @@ def compare_boundary_signatures(img1_path, img2_path, debug=False):
     
     # Calculate final score with improved weights including SWIFT
     weights = {
-        'scalar_features': 0.30,  # Increased weight
-        'projections': 0.30,      # Increased weight
-        'boundary_points': 0.25,  # Increased weight
-        'swift_features': 0.15    # Kept same
+        'scalar_features': 0.40,  
+        'projections': 0.30,      
+        'boundary_points': 0.20,  
+        'swift_features': 0.10 
     }
     
     final_score = (

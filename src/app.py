@@ -57,9 +57,9 @@ def display_boundary_results(results):
         st.metric("Adjusted Score", f"{results['adjusted_score']:.3f}")
     
     # Display verdict
-    if results['adjusted_score'] > 0.75 and len(results['red_flags']) == 0:
+    if results['adjusted_score'] > 0.80 and len(results['red_flags']) == 0:
         st.success("✅ STRONG MATCH")
-    elif results['adjusted_score'] > 0.65 and len(results['red_flags']) <= 1:
+    elif results['adjusted_score'] > 0.74 and len(results['red_flags']) <= 1:
         st.warning("⚠️ POSSIBLE MATCH")
     else:
         st.error("❌ NO MATCH")
@@ -72,87 +72,6 @@ def display_boundary_results(results):
     st.subheader("Signature Analysis")
     fig = visualize_boundary_results(results)
     st.pyplot(fig)
-
-def display_texture_results(results):
-    """Display texture-based verification results"""
-    st.subheader("Texture Analysis Results")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.metric("Texture Similarity", f"{np.mean(list(results['texture_similarities'].values())):.3f}")
-        st.metric("Gradient Similarity", f"{results['gradient_similarity']:.3f}")
-    
-    with col2:
-        st.metric("Final Score", f"{results['final_score']:.3f}")
-    
-    st.subheader("Texture Feature Analysis")
-    fig, ax = plt.subplots(figsize=(10, 6))
-    features = list(results['texture_similarities'].keys())
-    similarities = list(results['texture_similarities'].values())
-    
-    colors = ['green' if s > 0.6 else 'orange' if s > 0.4 else 'red' for s in similarities]
-    ax.bar(features, similarities, color=colors)
-    ax.set_ylim(0, 1)
-    ax.set_title("Texture Feature Similarities")
-    ax.tick_params(axis='x', rotation=45)
-    st.pyplot(fig)
-    
-    if results['final_score'] > 0.75:
-        st.success("✅ STRONG MATCH")
-    elif results['final_score'] > 0.65:
-        st.warning("⚠️ POSSIBLE MATCH")
-    else:
-        st.error("❌ NO MATCH")
-
-def display_combined_results(boundary_results, texture_results):
-    """Display combined verification results"""
-    st.subheader("Combined Analysis Results")
-    
-    weights = {
-        'boundary': 0.6,
-        'texture': 0.4
-    }
-    
-    combined_score = (
-        weights['boundary'] * boundary_results['final_score'] +
-        weights['texture'] * texture_results['final_score']
-    )
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.metric("Boundary Score", f"{boundary_results['final_score']:.3f}")
-        st.metric("Texture Score", f"{texture_results['final_score']:.3f}")
-    
-    with col2:
-        st.metric("Combined Score", f"{combined_score:.3f}")
-    
-    with col3:
-        st.metric("Red Flags", len(boundary_results['red_flags']))
-    
-    tab1, tab2 = st.tabs(["Boundary Analysis", "Texture Analysis"])
-    
-    with tab1:
-        fig = visualize_boundary_results(boundary_results)
-        st.pyplot(fig)
-    
-    with tab2:
-        display_texture_results(texture_results)
-    
-    # Display verdict
-    if combined_score > 0.80 and len(boundary_results['red_flags']) == 0:
-        st.success("✅ STRONG MATCH")
-    elif combined_score > 0.65 and len(boundary_results['red_flags']) <= 1:
-        st.warning("⚠️ POSSIBLE MATCH")
-    else:
-        st.error("❌ NO MATCH")
-    
-    # Display red flags if any
-    if boundary_results['red_flags']:
-        st.error("Red Flags Detected:")
-        for flag in boundary_results['red_flags']:
-            st.write(f"• {flag}")
 
 def apply_dwt(image, wavelet='db1', level=2):
     """Apply Discrete Wavelet Transform to the image"""
@@ -375,7 +294,7 @@ if page == "Signature Verification":
     
     verification_method = st.radio(
         "Select verification method:",
-        ["Boundary Analysis", "Texture Analysis", "Combined Analysis"]
+        ["Boundary Analysis"]
     )
     
     if signature1 and signature2:

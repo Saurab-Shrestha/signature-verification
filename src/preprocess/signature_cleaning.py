@@ -47,8 +47,6 @@ class SignatureCleaner:
             else:
                 image = Image.open(image_input)
             return image.convert("RGB")
-        else:
-            raise ValueError("Image must be a file path, URL, or PIL Image object")
 
     def clean_image(self, image: Union[str, Image.Image], with_alpha: bool = False) -> Tuple[Image.Image, np.ndarray]:
         """
@@ -85,7 +83,7 @@ class SignatureCleaner:
 
         return result_image, np.array(mask_resized)
 
-    def normalize_image(self, img: np.ndarray, size: Tuple[int, int] = (840, 1360)) -> np.ndarray:
+    def normalize_image(self, img: np.ndarray, size: Tuple[int, int] = (512, 512)) -> np.ndarray:
         """
         Normalize image size and position with dynamic canvas sizing.
         
@@ -185,7 +183,7 @@ class SignatureCleaner:
         print(f"Saved cleaned image to: {save_path}")
 
     def clean_and_normalize(self, image_input: Union[str, Image.Image], save_path: str, 
-                                normalize_size: Tuple[int, int] = (840, 1360), show: bool = False):
+                                normalize_size: Tuple[int, int] = (512, 512), show: bool = False):
 
         original = self.load_image(image_input)
         cleaned_image, _ = self.clean_image(original)
