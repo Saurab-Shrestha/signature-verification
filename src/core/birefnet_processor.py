@@ -7,7 +7,7 @@ import numpy as np
 class BiRefNetProcessor:
     def __init__(self):
         """Initialize BiRefNet model and preprocessing pipeline"""
-        self.device = "mps" if torch.cuda.is_available() else "cpu"
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
         torch.set_float32_matmul_precision(["high", "highest"][0])
         
         # Load BiRefNet model

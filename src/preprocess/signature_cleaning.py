@@ -193,6 +193,37 @@ class SignatureCleaner:
         normalized_image = self.normalize_image(cleaned_gray, normalize_size)
         normalized_pil = Image.fromarray(normalized_image, 'L')
         return original, cleaned_image, normalized_pil
-
-
     
+    def clean_normalize_and_save(self, image_input: Union[str, Image.Image], save_path: str, 
+                                normalize_size: Tuple[int, int] = (840, 1360), show: bool = False):
+        """
+        Clean image, normalize it, and save results. Optionally visualize the full process.
+        
+        Args:
+            image_input: Input image path or PIL Image
+            save_path: Path to save the final normalized image
+            normalize_size: Target size for normalization (height, width)
+            show: Whether to display visualization
+        """
+    
+        original = self.load_image(image_input)
+        cleaned_image, _ = self.clean_image(original)
+        cleaned_gray = np.array(cleaned_image.convert('L'))
+        normalized_image = self.normalize_image(cleaned_gray, normalize_size)
+        normalized_pil = Image.fromarray(normalized_image, 'L')
+        self.save_image(normalized_pil, save_path)
+        if show:
+            self.visualize_full_process(original, cleaned_image, normalized_image)
+        
+        return original, cleaned_image, normalized_pil
+    
+    def clean_and_save(self, image_input: Union[str, Image.Image], save_path: str, show: bool = False):
+        """
+        Clean image and save result to directory. Optionally visualize it.
+        """
+        original = self.load_image(image_input)
+        cleaned_image, _ = self.clean_image(original)
+        self.save_image(cleaned_image, save_path)
+
+        if show:
+            self.visualize(original, cleaned_image)
