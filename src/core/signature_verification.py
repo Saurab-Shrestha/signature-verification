@@ -11,10 +11,12 @@ from scipy.signal import convolve2d
 from preprocess.signature_cleaning import SignatureCleaner
 import tempfile
 import os
-from .image_matching import SignatureMatchingPipeline
+from core.image_matching import SignatureMatchingPipeline
+import uuid
 
-# Initialize SignatureCleaner as a global instance
+
 signature_cleaner = SignatureCleaner()
+pipeline = SignatureMatchingPipeline()
 
 def filter_boundary_points(boundary_coords, min_cluster_size=3):
     """Filter boundary points to remove isolated noise"""
@@ -269,20 +271,45 @@ def compare_boundary_signatures(img1_path, img2_path, debug=False):
     # Calculate boundary point similarity
     boundary_similarity = compare_boundary_points(boundary1, boundary2)
     
+    # Directory where you want to save the temp images
+    temp_dir = r'/Users/saurabshrestha/Downloads/cheques/signature_verification/deep-image-matching/images'
+
+    # Ensure the directory exists
+    os.makedirs(temp_dir, exist_ok=True)
+
+    # Generate unique filenames
+    temp_path1 = os.path.join(temp_dir, f"sig1_{uuid.uuid4().hex}.png")
+    temp_path2 = os.path.join(temp_dir, f"sig2_{uuid.uuid4().hex}.png")
+
+    cv2.imwrite(temp_path1, raw1)
+    cv2.imwrite(temp_path2, raw2)
+
+    try:
+        signature_matches = pipeline.analyze_signature_pair(
+            image1=temp_path1, image2=temp_path2, visualize=True, save_viz=False
+        )
+        print("Signature matches: ", signature_matches)
+    finally:
+        if os.path.exists(temp_path1):
+            os.unlink(temp_path1)
+        if os.path.exists(temp_path2):
+            os.unlink(temp_path2)
+
     # Calculate final score with improved weights including SWIFT
     weights = {
-        'scalar_features': 0.30,  # Increased weight
-        'projections': 0.30,      # Increased weight
-        'boundary_points': 0.25,  # Increased weight
-        'swift_features': 0.15    # Kept same
+        'scalar_features': 0.25,
+        'projections': 0.25,
+        'boundary_points': 0.20,
+        'swift_features': 0.10,
+        'signature_matches': 0.20
     }
-    
+
     final_score = (
         weights['scalar_features'] * similarities['scalar_avg'] +
-        weights['projections'] * (similarities['h_projection_corr'] +
-                                 similarities['v_projection_corr']) / 2 +
+        weights['projections'] * (similarities['h_projection_corr'] + similarities['v_projection_corr']) / 2 +
         weights['boundary_points'] * boundary_similarity +
-        weights['swift_features'] * similarities['swift_avg']
+        weights['swift_features'] * similarities['swift_avg'] +
+        weights['signature_matches'] * signature_matches['match_ratio']
     )
 
     # Enhanced red flag detection with slightly stricter thresholds
@@ -306,6 +333,12 @@ def compare_boundary_signatures(img1_path, img2_path, debug=False):
     if abs(features1['num_components'] - features2['num_components']) > 3:
         red_flags.append("Very different number of connected components")
 
+    if signature_matches['match_ratio'] < 0.2:
+        red_flags.append("Very less number of matching points")
+
+    # Print red flags for debugging
+    print("Red flags:", red_flags)
+
     # Adjust score based on red flags with increased penalty
     penalty = len(red_flags) * 0.10
     adjusted_score = max(0, final_score - penalty)
@@ -317,6 +350,7 @@ def compare_boundary_signatures(img1_path, img2_path, debug=False):
         'features1': features1, 'features2': features2,
         'similarities': similarities,
         'boundary_similarity': boundary_similarity,
+        'signature_matches': signature_matches['match_ratio'],
         'final_score': final_score,
         'adjusted_score': adjusted_score,
         'red_flags': red_flags
