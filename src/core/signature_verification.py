@@ -272,21 +272,26 @@ def compare_boundary_signatures(img1_path, img2_path, debug=False):
     boundary_similarity = compare_boundary_points(boundary1, boundary2)
     
     # Directory where you want to save the temp images
-    temp_dir = r'/Users/saurabshrestha/Downloads/cheques/signature_verification/deep-image-matching/images'
+    # temp_dir = r'/Users/saurabshrestha/Downloads/cheques/signature_verification/deep-image-matching/images'
+    temp_dir = r'/home/kshitiz/Documents/Deep_Image_Matching/signature-verification/deep-image-matching/images'
 
     # Ensure the directory exists
     os.makedirs(temp_dir, exist_ok=True)
 
     # Generate unique filenames
-    temp_path1 = os.path.join(temp_dir, f"sig1_{uuid.uuid4().hex}.png")
-    temp_path2 = os.path.join(temp_dir, f"sig2_{uuid.uuid4().hex}.png")
+    img1_id = uuid.uuid4().hex
+    img2_id = uuid.uuid4().hex
+    img1_name = "sig1_"+img1_id+".png"
+    img2_name = "sig2_"+img2_id+".png"
+    temp_path1 = os.path.join(temp_dir, img1_name)
+    temp_path2 = os.path.join(temp_dir, img2_name)
 
     cv2.imwrite(temp_path1, raw1)
     cv2.imwrite(temp_path2, raw2)
 
     try:
         signature_matches = pipeline.analyze_signature_pair(
-            image1=temp_path1, image2=temp_path2, visualize=True, save_viz=False
+            image1=img1_name, image2=img2_name, visualize=True, save_viz=False
         )
         print("Signature matches: ", signature_matches)
     finally:
@@ -294,6 +299,7 @@ def compare_boundary_signatures(img1_path, img2_path, debug=False):
             os.unlink(temp_path1)
         if os.path.exists(temp_path2):
             os.unlink(temp_path2)
+        
 
     # Calculate final score with improved weights including SWIFT
     weights = {

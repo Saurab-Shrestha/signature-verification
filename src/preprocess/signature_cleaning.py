@@ -17,7 +17,8 @@ class SignatureCleaner:
         """
         Initialize SignatureCleaner by loading the BiRefNet model.
         """
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        # self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = "cpu"
         print(f"Using device: {self.device}")
 
         print("Loading BiRefNet model...")
