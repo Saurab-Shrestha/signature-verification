@@ -1,0 +1,6 @@
+path: /home/kshitiz/Documents/yolov8s-signature-detector/coco_data
+train: images/train
+val: images/train  # Use same for now unless you have val split
+
+nc: 1
+names: ["signature"]
