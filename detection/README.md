@@ -37,5 +37,7 @@ The final weights are available in the main directory of the repository:
 
 
 ## Training command :
-
-'yolo detect train model=yolov8stuned.pt data=signature_coco.yaml epochs=50 imgsz=640 batch=2'
+- Training<br>
+`yolo detect train model=yolov8s.yaml data=signature_coco.yaml epochs=50 imgsz=512 batch=4 workers=2 plots=False pretrained=False`
+- fine-tuning : <br>
+`yolo detect train model=yolov8s.pt data=signature_coco.yaml epochs=10 imgsz=640 batch=2`
